@@ -2,3 +2,6 @@ pandas
 numpy
 jupyter
 matplotlib
+rasterio 
+geopandas
+osmnx
