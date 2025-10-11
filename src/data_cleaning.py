@@ -12,6 +12,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
+#COMMON_CRS = "EPSG:4326"
 COMMON_CRS = "EPSG:32637"   # UTM zone 37N (Kenya)
 
 def load_data():
@@ -41,7 +42,7 @@ def load_data():
             acled_df['CENTROID_LONGITUDE'], 
             acled_df['CENTROID_LATITUDE']
         ),
-        crs=COMMON_CRS
+        crs="EPSG:4326"
         )
     #data['eth']['acled'] = acled_gdf[acled_gdf['COUNTRY'] == 'Ethiopia']
     data['ken']['acled'] = acled_gdf[acled_gdf['COUNTRY'] == 'Kenya']
