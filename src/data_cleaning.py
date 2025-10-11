@@ -157,11 +157,11 @@ def handle_missing_values(data):
             # Handle population data
             elif dataset_name == 'population':
                 # Replace -99999 values with 0
-                dataset_cleaned = dataset.where(dataset != -99999, 0)
-                replaced = (dataset == -99999).sum().values
+                dataset_cleaned = dataset.where(dataset != -99999.0, 0)
+                replaced = (dataset == -99999.0).sum().values
                 
                 if replaced > 0:
-                    print(f"Replaced {replaced} missing values (-99999) with 0 in {country} - {dataset_name}")
+                    print(f"Replaced {replaced} missing values (-99999.0) with 0 in {country} - {dataset_name}")
                 
                 data_clean[country][dataset_name] = dataset_cleaned
             
@@ -186,6 +186,6 @@ def clean_data_pipeline():
     data = load_data()
     data = reproject(data)
     data = handle_missing_values(data)
-    
+
     print(f"Data cleaning complete.")
     return data
