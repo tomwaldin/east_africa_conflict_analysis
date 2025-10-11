@@ -12,7 +12,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
-COMMON_CRS = "EPSG:4326"
+COMMON_CRS = "EPSG:32637"   # UTM zone 37N (Kenya)
 
 def load_data():
     """
@@ -99,21 +99,22 @@ def reproject(data):
             if hasattr(dataset, 'rio'):
                 current_crs = dataset.rio.crs
                 if current_crs is None:
-                    print(f"Reprojection required: {country} - {dataset_name} (No CRS set)")
-                elif str(current_crs) != COMMON_CRS:
-                    print(f"Reprojection required: {country} - {dataset_name} (Current: {current_crs})")
-                # For now, just pass through without reprojecting
+                    # assign EPSG:4326 or whatever the rasters originally come in
+                    dataset = dataset.rio.write_crs("EPSG:4326", inplace=True)
+                if str(dataset.rio.crs) != COMMON_CRS:
+                    dataset = dataset.rio.reproject(COMMON_CRS)
                 data_clean[country][dataset_name] = dataset
             
             # Check if it's a GeoDataFrame (has crs attribute)
             elif hasattr(dataset, 'crs'):
                 current_crs = dataset.crs
                 if current_crs is None:
-                    print(f"Reprojection required: {country} - {dataset_name} (No CRS set)")
-                elif str(current_crs) != COMMON_CRS:
-                    print(f"Reprojection required: {country} - {dataset_name} (Current: {current_crs})")
-                # For now, just pass through without reprojecting
+                    # assume it's EPSG:4326 if missing
+                    dataset = dataset.set_crs("EPSG:4326")
+                if str(dataset.crs) != COMMON_CRS:
+                    dataset = dataset.to_crs(COMMON_CRS)
                 data_clean[country][dataset_name] = dataset
+
             
             else:
                 print(f"Warning: {country} - {dataset_name} has no recognizable CRS attribute")
