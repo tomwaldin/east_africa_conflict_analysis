@@ -57,7 +57,7 @@ def load_data():
 
     # Country and administritive boundaries
     #data['eth']['bounds'] = gpd.read_file("data/gadm41_ETH_shp")
-    data['ken']['bounds'] = gpd.read_file(DATA_DIR / "gadm41_KEN_shp")
+    data['ken']['bounds'] = gpd.read_file(DATA_DIR / "gadm41_KEN_shp" / "gadm41_KEN_2.shp")
     #data['ssd']['bounds'] = gpd.read_file("data/gadm41_SSD_shp")
     #data['uga']['bounds'] = gpd.read_file("data/gadm41_UGA_shp")
 
