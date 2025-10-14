@@ -6,8 +6,6 @@ Designed to plug into your existing pipeline style:
   data = clean_data_pipeline()
   data = feature_engineering_pipeline(data)
   gdf, model = run_gwr_pipeline(data['ken']['features'], ...)
-
-Author: ChatGPT (adapt to your name/metadata)
 """
 
 from pathlib import Path
@@ -23,7 +21,7 @@ from sklearn.preprocessing import StandardScaler
 from mgwr.gwr import GWR
 from mgwr.sel_bw import Sel_BW
 
-# Logging / messages consistent with your pipelines
+# Logging / messages consistent with pipelines
 def _msg(s: str):
     print(f"[modeling] {s}")
 

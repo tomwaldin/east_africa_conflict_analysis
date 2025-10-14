@@ -217,10 +217,10 @@ def feature_engineering_pipeline(data: Dict, country_key: str = "ken", unit_id_c
     return data
 
 
-# If run as script for debugging
-if __name__ == "__main__":
-    # Quick local test (will error if run outside your project)
-    from src.data_cleaning import clean_data_pipeline
-    d = clean_data_pipeline()
-    d = feature_engineering_pipeline(d, country_key="ken", unit_id_col="GID_2")
-    print(d["ken"]["features"].head())
+# # If run as script for debugging
+# if __name__ == "__main__":
+#     # Quick local test (will error if run outside your project)
+#     from src.data_cleaning import clean_data_pipeline
+#     d = clean_data_pipeline()
+#     d = feature_engineering_pipeline(d, country_key="ken", unit_id_col="GID_2")
+#     print(d["ken"]["features"].head())
