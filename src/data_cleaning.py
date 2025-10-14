@@ -12,7 +12,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
-#COMMON_CRS = "EPSG:4326"
 COMMON_CRS = "EPSG:32637"   # UTM zone 37N (Kenya)
 
 def load_data():
@@ -25,17 +24,28 @@ def load_data():
     Returns:
         data: A nested dictionary of the data
     """
+    
+    # Define country configurations
+    countries = {
+        #'eth': {'name': 'Ethiopia', 'code': 'ETH'},
+        'ken': {'name': 'Kenya', 'code': 'KEN'}#,
+        #'ssd': {'name': 'South Sudan', 'code': 'SSD'},
+        #'uga': {'name': 'Uganda', 'code': 'UGA'}
+    }
 
-    # Initialise data dict with country codes
-    data = {}
-    data['eth'] = {}
-    data['ken'] = {}
-    data['ssd'] = {}
-    data['uga'] = {}
-
-    # ACLED conflict data
+    # Define OSM features to download
+    osm_features = {
+        'police': {'amenity': ['police']}#,
+        #'hospitals': {'amenity': ['hospital', 'clinic']},
+        #'schools': {'amenity': ['school', 'university', 'college']},
+        #'roads': {'highway': ['motorway', 'trunk', 'primary', 'secondary']}
+    }
+    
+    # Initialize data dict
+    data = {code: {} for code in countries.keys()}
+    
+    # Load ACLED conflict data (shared across countries)
     acled_df = pd.read_csv(DATA_DIR / "Africa_aggregated_data_up_to-2025-08-23.csv")
-    # Convert to gdf
     acled_gdf = gpd.GeoDataFrame(
         acled_df,
         geometry=gpd.points_from_xy(
@@ -43,41 +53,47 @@ def load_data():
             acled_df['CENTROID_LATITUDE']
         ),
         crs="EPSG:4326"
-        )
-    #data['eth']['acled'] = acled_gdf[acled_gdf['COUNTRY'] == 'Ethiopia']
-    data['ken']['acled'] = acled_gdf[acled_gdf['COUNTRY'] == 'Kenya']
-    #data['ssd']['acled'] = acled_gdf[acled_gdf['COUNTRY'] == 'South Sudan']
-    #data['uga']['acled'] = acled_gdf[acled_gdf['COUNTRY'] == 'Uganda']
-
-    # Population data
-    #data['eth']['population'] = rio.open("data/eth_pop_2020_CN_100m_R2025A_v1.tif")
-    data['ken']['population'] = rxr.open_rasterio(DATA_DIR / "ken_pop_2020_CN_100m_R2025A_v1.tif")
-    print(type(data['ken']['population'])) 
-    #data['ssd']['population'] = rio.open("data/ssd_pop_2020_CN_100m_R2025A_v1.tif")
-    #data['uga']['population'] = rio.open("data/uga_pop_2020_CN_100m_R2025A_v1.tif")
-
-    # Country and administritive boundaries
-    #data['eth']['bounds'] = gpd.read_file("data/gadm41_ETH_shp")
-    data['ken']['bounds'] = gpd.read_file(DATA_DIR / "gadm41_KEN_shp" / "gadm41_KEN_2.shp")
-    #data['ssd']['bounds'] = gpd.read_file("data/gadm41_SSD_shp")
-    #data['uga']['bounds'] = gpd.read_file("data/gadm41_UGA_shp")
-
-    # Define path relative to src directory
-    police_file = DATA_DIR / "kenya_police.parquet"
-    # Check if file exists, if not download and save
-    if not os.path.exists(police_file):
-        print("Downloading Kenya police data from OSM...")
-        kenya_police = ox.features_from_place("Kenya", tags={
-            "amenity": ["police"]
-        })
-        kenya_police.to_parquet(police_file)
-        print(f"Saved {police_file}")
-    else:
-        print(f"Using existing {police_file}")
-    # Load the police data
-    data['ken']['police'] = gpd.read_parquet(police_file)
+    )
+    
+    # Load country-specific data
+    for code, info in countries.items():
+        country_name = info['name']
+        country_code = info['code']
         
-
+        # ACLED conflict data
+        data[code]['acled'] = acled_gdf[acled_gdf['COUNTRY'] == country_name]
+        
+        # Population data
+        pop_file = DATA_DIR / f"{code}_pop_2020_CN_100m_R2025A_v1.tif"
+        if pop_file.exists():
+            data[code]['population'] = rxr.open_rasterio(pop_file)
+        
+        # Country and administrative boundaries
+        bounds_file = DATA_DIR / f"gadm41_{country_code}_shp" / f"gadm41_{country_code}_2.shp"
+        if bounds_file.exists():
+            data[code]['bounds'] = gpd.read_file(bounds_file)
+        
+        # OSM feature data
+        for feature_name, tags in osm_features.items():
+            feature_file = DATA_DIR / f"{code}_{feature_name}.parquet"
+            
+            if not feature_file.exists():
+                print(f"Downloading {country_name} {feature_name} data from OSM...")
+                try:
+                    feature_data = ox.features_from_place(country_name, tags=tags)
+                    feature_data.to_parquet(feature_file)
+                    print(f"Saved {feature_file}")
+                except Exception as e:
+                    print(f"Failed to download {feature_name} data for {country_name}: {e}")
+                    continue
+            else:
+                print(f"Using existing {feature_file}")
+            
+            try:
+                data[code][feature_name] = gpd.read_parquet(feature_file)
+            except Exception as e:
+                print(f"Failed to load {feature_name} data for {country_name}: {e}")
+        
     return data
 
 def reproject(data):
