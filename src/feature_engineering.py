@@ -28,39 +28,104 @@ PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 
 
-def aggregate_conflict_and_police(data: Dict, country_key: str, unit_id_col: str = "GID_2") -> Dict:
-    """
-    Spatially aggregates ACLED events and police points to the provided admin units.
+# def aggregate_conflict_and_police(data: Dict, country_key: str, unit_id_col: str = "GID_2") -> Dict:
+#     """
+#     Spatially aggregates ACLED events and police points to the provided admin units.
 
-    Adds:
-      data[country_key]['features'] : GeoDataFrame (copy of bounds + counts)
+#     Adds:
+#       data[country_key]['features'] : GeoDataFrame (copy of bounds + counts)
+#     """
+#     acled_gdf = data[country_key].get("acled")
+#     police_gdf = data[country_key].get("police")
+#     units_gdf = data[country_key].get("bounds")
+
+#     if acled_gdf is None or police_gdf is None or units_gdf is None:
+#         raise ValueError(f"Missing one of acled/police/bounds in data['{country_key}'].")
+
+#     # ensure index is not ambiguous
+#     units = units_gdf.copy()
+
+#     # Spatial join ACLED -> units
+#     print("  - Spatially joining ACLED events to admin units...")
+#     acled_join = gpd.sjoin(acled_gdf, units, how="left", predicate="within")
+#     acled_counts = acled_join.groupby(unit_id_col).size()
+#     units["conflict_count"] = units[unit_id_col].map(acled_counts).fillna(0).astype(int)
+
+#     # Spatial join police -> units
+#     print("  - Spatially joining police stations to admin units...")
+#     police_join = gpd.sjoin(police_gdf, units, how="left", predicate="within")
+#     police_counts = police_join.groupby(unit_id_col).size()
+#     units["police_count"] = units[unit_id_col].map(police_counts).fillna(0).astype(int)
+
+#     # store results
+#     data[country_key]["features"] = units
+#     print("  -> Aggregation complete: conflict_count & police_count added.")
+#     return data
+
+def aggregate_to_units(
+    data: Dict,
+    country_key: str,
+    feature_keys: list,
+    unit_id_col: str = "GID_2"
+) -> Dict:
     """
+    Aggregates conflict (ACLED) and multiple OSM features to admin units.
+
+    Parameters
+    ----------
+    data : dict
+        Nested dict, e.g. data['ken']['acled'], data['ken']['police'], ...
+    country_key : str
+        e.g. "ken"
+    feature_keys : list of str
+        Keys in data[country_key] corresponding to OSM-derived point or line features
+        e.g. ["police", "schools", "hospitals"]
+    unit_id_col : str
+        Column in admin bounds uniquely identifying each unit
+
+    Returns
+    -------
+    data : dict with
+        data[country_key]["features"] = GeoDataFrame with conflict_count + feature counts
+    """
+    # 1. Grab needed layers
     acled_gdf = data[country_key].get("acled")
-    police_gdf = data[country_key].get("police")
     units_gdf = data[country_key].get("bounds")
 
-    if acled_gdf is None or police_gdf is None or units_gdf is None:
-        raise ValueError(f"Missing one of acled/police/bounds in data['{country_key}'].")
+    if acled_gdf is None or units_gdf is None:
+        raise ValueError(f"Missing 'acled' or 'bounds' in data['{country_key}'].")
 
-    # ensure index is not ambiguous
+    # Make a copy of the units to store new columns
     units = units_gdf.copy()
 
-    # Spatial join ACLED -> units
+    # 2. Aggregate ACLED conflict events
     print("  - Spatially joining ACLED events to admin units...")
     acled_join = gpd.sjoin(acled_gdf, units, how="left", predicate="within")
     acled_counts = acled_join.groupby(unit_id_col).size()
     units["conflict_count"] = units[unit_id_col].map(acled_counts).fillna(0).astype(int)
 
-    # Spatial join police -> units
-    print("  - Spatially joining police stations to admin units...")
-    police_join = gpd.sjoin(police_gdf, units, how="left", predicate="within")
-    police_counts = police_join.groupby(unit_id_col).size()
-    units["police_count"] = units[unit_id_col].map(police_counts).fillna(0).astype(int)
+    # 3. Loop through OSM-derived features (points or lines)
+    for key in feature_keys:
+        feature_gdf = data[country_key].get(key)
+        if feature_gdf is None:
+            print(f"  WARNING: data['{country_key}']['{key}'] not found. Skipping.")
+            continue
 
-    # store results
+        print(f"  - Spatially joining {key} to admin units...")
+        # Use within for points. For lines, 'intersects' might be more appropriate.
+        joined = gpd.sjoin(feature_gdf, units, how="left", predicate="intersects")
+
+        # Count number of features per unit
+        counts = joined.groupby(unit_id_col).size()
+
+        new_col = f"{key}_count"
+        units[new_col] = units[unit_id_col].map(counts).fillna(0).astype(int)
+
+    # 4. Store back to data structure
     data[country_key]["features"] = units
-    print("  -> Aggregation complete: conflict_count & police_count added.")
+    print("  -> Aggregation complete: conflict_count + feature counts added.")
     return data
+
 
 
 def _ensure_raster_on_disk(raster_obj: Union[str, xr.DataArray], tmp_dir: Path) -> str:
@@ -144,77 +209,209 @@ def add_population_from_raster(
     print("  -> Population added to features (NaN for zero-pop units).")
     return data
 
-
-def create_rates_and_densities(data: Dict, country_key: str, unit_id_col: str = "GID_2") -> Dict:
+def create_rates_and_densities(
+    data: Dict,
+    country_key: str,
+    unit_id_col: str = "GID_2",
+    per_capita_base: int = 10000  # 10k for general features, conflict uses 100k
+) -> Dict:
     """
-    From the aggregated counts and population, create:
-      - area_km2
-      - conflict_rate (per 100k)
-      - police_density (per 10k people)  *or* per km2 if population missing
-      - log transforms for both (small constant added)
+    Generalized version:
+    - Computes area_km2 (for reference, not used in rates)
+    - For conflict_count: creates conflict_rate_per_100k + log
+    - For ALL *_count columns (including police, schools, hospitals, etc.):
+        -> creates feature_per_10k
+        -> creates log_feature_density
+    - Assumes population exists; if not, falls back to per km²
     """
     print("Creating rates and densities...")
 
     features = data[country_key].get("features")
     if features is None:
-        raise ValueError("Call aggregate_conflict_and_police and add_population_from_raster first.")
+        raise ValueError("Call aggregate_to_units + add_population_from_raster first.")
 
     gdf = features.copy()
 
-    # Ensure geometry is projected in meters for area calc; if not, compute based on current CRS (warn)
+    # Ensure CRS
     if gdf.crs is None:
-        raise ValueError("features GeoDataFrame has no CRS. Reproject to a projected CRS before proceeding.")
-    # area in km^2 (CRS must be projected in metres; if EPSG:4326 this will be degrees -> small error)
-    # best practice: user has reprojected earlier in data_cleaning; we still compute and warn if not projected
+        raise ValueError("features GeoDataFrame has no CRS. Reproject first.")
+
+    # Warn if geographic CRS
     if "degree" in str(gdf.crs).lower() or str(gdf.crs).upper().startswith("EPSG:4326"):
-        print("  WARNING: features CRS appears geographic (degrees). Area will be approximate. Prefer projected CRS.")
+        print("  WARNING: CRS is geographic. Area approximation may be inaccurate. Projected CRS is preferable.")
 
-    gdf["area_km2"] = gdf.geometry.to_crs(gdf.crs).area / 1e6
+    # Area (not used for rates, but useful to keep)
+    gdf["area_km2"] = gdf.geometry.area / 1e6
 
-    # Conflict rate per 100k population
-    if "population" in gdf.columns and gdf["population"].notna().sum() > 0:
-        # population currently is raw counts; compute per-100k
-        gdf["conflict_rate_per_100k"] = (gdf["conflict_count"] / gdf["population"]) * 100_000
-        # police density per 10k people
-        gdf["police_per_10k"] = (gdf["police_count"] / gdf["population"]) * 10_000
-    else:
-        print("  WARNING: population column missing or all NaN. Falling back to densities per km^2.")
-        gdf["conflict_rate_per_100k"] = (gdf["conflict_count"] / gdf["area_km2"])  # events per km2
-        gdf["police_per_10k"] = gdf["police_count"] / gdf["area_km2"]
+    # Check population
+    has_pop = "population" in gdf.columns and gdf["population"].notna().sum() > 0
+    if not has_pop:
+        print("  WARNING: No valid population. Falling back to per km² densities.")
 
-    # small constant to avoid log(0)
+    # Small constant for log
     eps = 1e-6
+
+    # 1. Conflict rate per 100k people (special case)
+    if has_pop:
+        gdf["conflict_rate_per_100k"] = (gdf["conflict_count"] / gdf["population"]) * 100_000
+    else:
+        gdf["conflict_rate_per_100k"] = gdf["conflict_count"] / gdf["area_km2"]
+
     gdf["log_conflict_rate"] = np.log(gdf["conflict_rate_per_100k"].fillna(0) + eps)
-    gdf["log_police_density"] = np.log(gdf["police_per_10k"].fillna(0) + eps)
+
+    # 2. Loop through ALL *other* *_count columns and compute per-capita + log
+    count_cols = [col for col in gdf.columns 
+                  if col.endswith("_count") and col != "conflict_count"]
+
+    for col in count_cols:
+        base_name = col.replace("_count", "")  # e.g. "police", "schools"
+
+        if has_pop:
+            rate_col = f"{base_name}_per_{per_capita_base//1000}k"
+            gdf[rate_col] = (gdf[col] / gdf["population"]) * per_capita_base
+        else:
+            rate_col = f"{base_name}_per_km2"
+            gdf[rate_col] = gdf[col] / gdf["area_km2"]
+
+        # Log transform
+        log_col = f"log_{base_name}_density"
+        gdf[log_col] = np.log(gdf[rate_col].fillna(0) + eps)
 
     data[country_key]["features"] = gdf
-    print("  -> Rates & log-transforms created.")
+    print("  -> Rates & log-transforms created for all feature counts.")
     return data
 
 
-def feature_engineering_pipeline(data: Dict, country_key: str = "ken", unit_id_col: str = "GID_2") -> Dict:
+# def create_rates_and_densities(data: Dict, country_key: str, unit_id_col: str = "GID_2") -> Dict:
+#     """
+#     From the aggregated counts and population, create:
+#       - area_km2
+#       - conflict_rate (per 100k)
+#       - police_density (per 10k people)  *or* per km2 if population missing
+#       - log transforms for both (small constant added)
+#     """
+#     print("Creating rates and densities...")
+
+#     features = data[country_key].get("features")
+#     if features is None:
+#         raise ValueError("Call aggregate_conflict_and_police and add_population_from_raster first.")
+
+#     gdf = features.copy()
+
+#     # Ensure geometry is projected in meters for area calc; if not, compute based on current CRS (warn)
+#     if gdf.crs is None:
+#         raise ValueError("features GeoDataFrame has no CRS. Reproject to a projected CRS before proceeding.")
+#     # area in km^2 (CRS must be projected in metres; if EPSG:4326 this will be degrees -> small error)
+#     # best practice: user has reprojected earlier in data_cleaning; we still compute and warn if not projected
+#     if "degree" in str(gdf.crs).lower() or str(gdf.crs).upper().startswith("EPSG:4326"):
+#         print("  WARNING: features CRS appears geographic (degrees). Area will be approximate. Prefer projected CRS.")
+
+#     gdf["area_km2"] = gdf.geometry.to_crs(gdf.crs).area / 1e6
+
+#     # Conflict rate per 100k population
+#     if "population" in gdf.columns and gdf["population"].notna().sum() > 0:
+#         # population currently is raw counts; compute per-100k
+#         gdf["conflict_rate_per_100k"] = (gdf["conflict_count"] / gdf["population"]) * 100_000
+#         # police density per 10k people
+#         gdf["police_per_10k"] = (gdf["police_count"] / gdf["population"]) * 10_000
+#     else:
+#         print("  WARNING: population column missing or all NaN. Falling back to densities per km^2.")
+#         gdf["conflict_rate_per_100k"] = (gdf["conflict_count"] / gdf["area_km2"])  # events per km2
+#         gdf["police_per_10k"] = gdf["police_count"] / gdf["area_km2"]
+
+#     # small constant to avoid log(0)
+#     eps = 1e-6
+#     gdf["log_conflict_rate"] = np.log(gdf["conflict_rate_per_100k"].fillna(0) + eps)
+#     gdf["log_police_density"] = np.log(gdf["police_per_10k"].fillna(0) + eps)
+
+#     data[country_key]["features"] = gdf
+#     print("  -> Rates & log-transforms created.")
+#     return data
+
+def feature_engineering_pipeline(
+    data: Dict,
+    feature_keys: list,
+    country_key: str = "ken",
+    unit_id_col: str = "GID_2"
+) -> Dict:
     """
     Master pipeline to create model-ready features for the specified country.
+
     Steps:
-      1. Aggregate conflict & police counts to admin units
-      2. Add population (zonal sum from raster)
-      3. Create rates/densities and log transforms
+      1. Aggregate conflict + selected OSM features (e.g., police, schools, hospitals)
+      2. Add population via zonal stats from raster
+      3. Create rates, densities, log transforms
 
-    Returns the updated data dict with data[country_key]['features'].
+    Parameters
+    ----------
+    data : dict
+        Nested dictionary of cleaned and loaded data.
+    feature_keys : list of str
+        Keys in data[country_key] for OSM-derived GeoDataFrames to aggregate.
+        e.g. ["police", "schools", "hospitals"]
+    country_key : str
+        Default "ken", but can be any loaded country.
+    unit_id_col : str
+        Unique identifier of the admin units, e.g. "GID_2"
+
+    Returns
+    -------
+    data : dict
+        Updated dict with data[country_key]['features'] ready for analysis.
     """
-    print("Starting feature engineering pipeline for:", country_key)
 
-    # 1. aggregate counts
-    data = aggregate_conflict_and_police(data, country_key, unit_id_col=unit_id_col)
+    print(f"Starting feature engineering pipeline for: {country_key}")
 
-    # 2. add population (uses data[country_key]['population'] by default)
-    data = add_population_from_raster(data, country_key, unit_id_col=unit_id_col)
+    # 1. Aggregate conflict and multiple OSM features
+    data = aggregate_to_units(
+        data=data,
+        country_key=country_key,
+        feature_keys=feature_keys,
+        unit_id_col=unit_id_col
+    )
 
-    # 3. create rates / densities / logs
-    data = create_rates_and_densities(data, country_key, unit_id_col=unit_id_col)
+    # 2. Add population
+    data = add_population_from_raster(
+        data=data,
+        country_key=country_key,
+        unit_id_col=unit_id_col
+    )
+
+    # 3. Create rates / densities / log transforms
+    data = create_rates_and_densities(
+        data=data,
+        country_key=country_key,
+        unit_id_col=unit_id_col
+    )
 
     print("Feature engineering pipeline complete.")
     return data
+
+
+
+# def feature_engineering_pipeline(data: Dict, country_key: str = "ken", unit_id_col: str = "GID_2", feature_keys) -> Dict:
+#     """
+#     Master pipeline to create model-ready features for the specified country.
+#     Steps:
+#       1. Aggregate conflict & police counts to admin units
+#       2. Add population (zonal sum from raster)
+#       3. Create rates/densities and log transforms
+
+#     Returns the updated data dict with data[country_key]['features'].
+#     """
+#     print("Starting feature engineering pipeline for:", country_key)
+
+#     # 1. aggregate counts
+#     data = aggregate_to_units(data, country_key, feature_keys=["police"], unit_id_col=unit_id_col)
+
+#     # 2. add population (uses data[country_key]['population'] by default)
+#     data = add_population_from_raster(data, country_key, unit_id_col=unit_id_col)
+
+#     # 3. create rates / densities / logs
+#     data = create_rates_and_densities(data, country_key, unit_id_col=unit_id_col)
+
+#     print("Feature engineering pipeline complete.")
+#     return data
 
 
 # # If run as script for debugging

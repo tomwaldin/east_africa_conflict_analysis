@@ -27,7 +27,7 @@ def load_data():
     
     # Define country configurations
     countries = {
-        #'eth': {'name': 'Ethiopia', 'code': 'ETH'},
+        'eth': {'name': 'Ethiopia', 'code': 'ETH'},
         'ken': {'name': 'Kenya', 'code': 'KEN'}#,
         #'ssd': {'name': 'South Sudan', 'code': 'SSD'},
         #'uga': {'name': 'Uganda', 'code': 'UGA'}
@@ -35,8 +35,8 @@ def load_data():
 
     # Define OSM features to download
     osm_features = {
-        'police': {'amenity': ['police']}#,
-        #'hospitals': {'amenity': ['hospital', 'clinic']},
+        'police': {'amenity': ['police']},
+        'hospitals': {'amenity': ['hospital', 'clinic']}#,
         #'schools': {'amenity': ['school', 'university', 'college']},
         #'roads': {'highway': ['motorway', 'trunk', 'primary', 'secondary']}
     }
