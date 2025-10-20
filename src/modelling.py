@@ -77,13 +77,27 @@ def _prepare_gwr_data(
     return coords, y, X, scaler
 
 
-def _select_bandwidth(coords: np.ndarray, y: np.ndarray, X: np.ndarray, kernel: str = "gaussian") -> float:
-    """Select bandwidth using mgwr.sel_bw.Sel_BW (AICc-based search)."""
+def _select_bandwidth(coords, y, X, kernel="gaussian", bw_min=None, bw_max=None):
+    """
+    Select an optimal bandwidth using mgwr.sel_bw.Sel_BW.
+    Now supports optional bw_min and bw_max to prevent crashes on small datasets.
+    """
     _msg("Selecting bandwidth (this may take a moment)...")
     selector = Sel_BW(coords, y, X, kernel=kernel)
-    bw = selector.search()
+
+    # If user provided bounds, pass them through (prevents mgwr crash on small N)
+    if bw_min is not None or bw_max is not None:
+        bw = selector.search(
+            bw_min=bw_min,
+            bw_max=bw_max
+        )
+    else:
+        # Default behavior (original code path)
+        bw = selector.search()
+
     _msg(f"Selected bandwidth: {bw}")
     return bw
+
 
 
 def _fit_gwr(coords: np.ndarray, y: np.ndarray, X: np.ndarray, bandwidth: float, kernel: str = "gaussian"):
@@ -160,6 +174,83 @@ def run_ols(gdf: gpd.GeoDataFrame, y_var: str, x_vars: List[str]):
     return results
 
 
+# def run_gwr_pipeline(
+#     gdf: gpd.GeoDataFrame,
+#     y_var: str = "log_conflict_rate_per_100k",
+#     x_vars: Optional[List[str]] = None,
+#     standardize: bool = True,
+#     kernel: str = "gaussian",
+#     auto_select_bw: bool = True,
+#     bandwidth: Optional[float] = None
+# ):
+#     """
+#     Run a modular GWR pipeline.
+
+#     Parameters
+#     ----------
+#     gdf : GeoDataFrame
+#         GeoDataFrame with geometry and variables already prepared.
+#     y_var : str
+#         Dependent variable column name (use log version).
+#     x_vars : list[str]
+#         List of predictor variable column names.
+#     standardize : bool
+#         Standardize predictors (recommended).
+#     kernel : str
+#         Kernel type for GWR (e.g., 'gaussian').
+#     auto_select_bw : bool
+#         If True, use Sel_BW to choose bandwidth. Otherwise use provided bandwidth.
+#     bandwidth : float or None
+#         If auto_select_bw is False, you must provide a bandwidth.
+
+#     Returns
+#     -------
+#     tuple (gdf_with_results, gwr_results, bw)
+#     - gdf_with_results : GeoDataFrame with local coefficients, local_R2, preds, resids appended
+#     - gwr_results : mgwr results object
+#     - bw : selected bandwidth
+#     """
+#     if x_vars is None:
+#         x_vars = ["police_per_10k"]
+
+#     _check_gdf(gdf, y_var, x_vars)
+#     _warn_if_geographic(gdf)
+
+#     # Prepare OLS baseline
+#     _msg("Running baseline OLS for comparison...")
+#     ols_res = run_ols(gdf, y_var, x_vars)
+#     _msg(f"OLS R-squared: {ols_res.rsquared:.4f}")
+
+#     # Prepare arrays for mgwr
+#     coords, y, X, scaler = _prepare_gwr_data(gdf, y_var, x_vars, standardize=standardize)
+
+#     # Bandwidth selection
+#     if auto_select_bw:
+#         bw = _select_bandwidth(coords, y, X, kernel=kernel)
+#     else:
+#         if bandwidth is None:
+#             raise ValueError("If auto_select_bw is False, you must provide a bandwidth.")
+#         bw = bandwidth
+#         _msg(f"Using provided bandwidth: {bw}")
+
+#     # Fit GWR
+#     gwr_res = _fit_gwr(coords, y, X, bandwidth=bw, kernel=kernel)
+
+#     # Attach results
+#     gdf_out = gdf.copy()
+#     gdf_out = _attach_results_to_gdf(gdf_out, gwr_res, x_vars, y_var, prefix="gwr_")
+
+#     # Print some diagnostics
+#     try:
+#         aicc = getattr(gwr_res, "aicc", None)
+#         if aicc is not None:
+#             _msg(f"GWR AICc: {aicc:.3f}")
+#     except Exception:
+#         pass
+
+#     # Return updated gdf and the results object for further inspection
+#     return gdf_out, gwr_res, bw
+
 def run_gwr_pipeline(
     gdf: gpd.GeoDataFrame,
     y_var: str = "log_conflict_rate_per_100k",
@@ -167,34 +258,12 @@ def run_gwr_pipeline(
     standardize: bool = True,
     kernel: str = "gaussian",
     auto_select_bw: bool = True,
-    bandwidth: Optional[float] = None
+    bandwidth: Optional[float] = None,
+    bw_min: Optional[int] = None,   # <-- ADDED
+    bw_max: Optional[int] = None    # <-- ADDED
 ):
     """
     Run a modular GWR pipeline.
-
-    Parameters
-    ----------
-    gdf : GeoDataFrame
-        GeoDataFrame with geometry and variables already prepared.
-    y_var : str
-        Dependent variable column name (use log version).
-    x_vars : list[str]
-        List of predictor variable column names.
-    standardize : bool
-        Standardize predictors (recommended).
-    kernel : str
-        Kernel type for GWR (e.g., 'gaussian').
-    auto_select_bw : bool
-        If True, use Sel_BW to choose bandwidth. Otherwise use provided bandwidth.
-    bandwidth : float or None
-        If auto_select_bw is False, you must provide a bandwidth.
-
-    Returns
-    -------
-    tuple (gdf_with_results, gwr_results, bw)
-    - gdf_with_results : GeoDataFrame with local coefficients, local_R2, preds, resids appended
-    - gwr_results : mgwr results object
-    - bw : selected bandwidth
     """
     if x_vars is None:
         x_vars = ["police_per_10k"]
@@ -212,7 +281,12 @@ def run_gwr_pipeline(
 
     # Bandwidth selection
     if auto_select_bw:
-        bw = _select_bandwidth(coords, y, X, kernel=kernel)
+        bw = _select_bandwidth(
+            coords, y, X, 
+            kernel=kernel,
+            bw_min=bw_min,     # <-- PASSED THROUGH
+            bw_max=bw_max      # <-- PASSED THROUGH
+        )
     else:
         if bandwidth is None:
             raise ValueError("If auto_select_bw is False, you must provide a bandwidth.")
@@ -234,14 +308,13 @@ def run_gwr_pipeline(
     except Exception:
         pass
 
-    # Return updated gdf and the results object for further inspection
     return gdf_out, gwr_res, bw
 
 
 # If run as script, provide a tiny smoke test (won't execute on import)
-if __name__ == "__main__":
-    _msg("This module is intended to be imported and used in your notebooks.")
-    _msg("Example usage:")
-    _msg("from src.modeling import run_gwr_pipeline")
-    _msg("gdf = data['ken']['features']")
-    _msg("gdf_out, results, bw = run_gwr_pipeline(gdf, y_var='log_conflict_rate_per_100k', x_vars=['police_per_10k'])")
+# if __name__ == "__main__":
+#     _msg("This module is intended to be imported and used in your notebooks.")
+#     _msg("Example usage:")
+#     _msg("from src.modeling import run_gwr_pipeline")
+#     _msg("gdf = data['ken']['features']")
+#     _msg("gdf_out, results, bw = run_gwr_pipeline(gdf, y_var='log_conflict_rate_per_100k', x_vars=['police_per_10k'])")
