@@ -7,14 +7,13 @@ import pandas as pd
 import rioxarray as rxr
 import geopandas as gpd
 import osmnx as ox
-import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 COMMON_CRS = "EPSG:32637"   # UTM zone 37N (Kenya)
 
-def load_data():
+def load_data(countries, osm_features):
     """
     Loads data of various types from a local directory and structures it as a nested dictionary.
     
@@ -26,26 +25,30 @@ def load_data():
     """
     
     # Define country configurations
-    countries = {
-        'eth': {'name': 'Ethiopia', 'code': 'ETH'},
-        'ken': {'name': 'Kenya', 'code': 'KEN'},
-        'ssd': {'name': 'South Sudan', 'code': 'SSD'},
-        'uga': {'name': 'Uganda', 'code': 'UGA'}
-    }
+    # countries = {
+    #     'eth': {'name': 'Ethiopia', 'code': 'ETH'},
+    #     'ken': {'name': 'Kenya', 'code': 'KEN'},
+    #     'ssd': {'name': 'South Sudan', 'code': 'SSD'},
+    #     'uga': {'name': 'Uganda', 'code': 'UGA'}
+    # }
 
     # Define OSM features to download
-    osm_features = {
-        'police': {'amenity': ['police']},
-        'hospitals': {'amenity': ['hospital', 'clinic']},
-        'schools': {'amenity': ['school', 'university', 'college']},
-        'roads': {'highway': ['motorway', 'trunk', 'primary', 'secondary']}
-    }
+    # osm_features = {
+    #     'police': {'amenity': ['police']},
+    #     'hospitals': {'amenity': ['hospital', 'clinic']},
+    #     'schools': {'amenity': ['school', 'university', 'college']}
+    # }
     
     # Initialize data dict
     data = {code: {} for code in countries.keys()}
     
     # Load ACLED conflict data (shared across countries)
     acled_df = pd.read_csv(DATA_DIR / "Africa_aggregated_data_up_to-2025-08-23.csv")
+
+    # Convert WEEK column to datetime and filter years 2015-2024
+    acled_df['date'] = pd.to_datetime(acled_df['WEEK'], format='%d-%B-%Y')
+    acled_df = acled_df[(acled_df['date'].dt.year >= 2015) & (acled_df['date'].dt.year <= 2024)]
+
     acled_gdf = gpd.GeoDataFrame(
         acled_df,
         geometry=gpd.points_from_xy(
@@ -81,6 +84,8 @@ def load_data():
                 print(f"Downloading {country_name} {feature_name} data from OSM...")
                 try:
                     feature_data = ox.features_from_place(country_name, tags=tags)
+                    if 'id' in feature_data.columns:
+                        feature_data['id'] = feature_data['id'].astype(str)                    
                     feature_data.to_parquet(feature_file)
                     print(f"Saved {feature_file}")
                 except Exception as e:
@@ -156,7 +161,7 @@ def handle_missing_values(data):
         
         for dataset_name, dataset in datasets.items():
             # Only handle acled and police data
-            if dataset_name in ['acled', 'police']:
+            if dataset_name in ['acled', 'police', 'hospitals', 'schools']:
                 # Remove rows where geometry (lat/long) is missing
                 # Check if it's a GeoDataFrame
                 if hasattr(dataset, 'geometry'):
@@ -189,7 +194,7 @@ def handle_missing_values(data):
     
     return data_clean
 
-def clean_data_pipeline():
+def clean_data_pipeline(countries, osm_features):
     """
     Complete data cleaning pipeline.
     
@@ -201,7 +206,7 @@ def clean_data_pipeline():
     """
     print("Starting data cleaning pipeline...")
     
-    data = load_data()
+    data = load_data(countries, osm_features)
     data = reproject(data)
     data = handle_missing_values(data)
 

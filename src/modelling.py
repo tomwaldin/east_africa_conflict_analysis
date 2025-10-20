@@ -1,11 +1,5 @@
 """
-modeling.py
-
-Modular spatial modeling pipeline using MGWR for Geographically Weighted Regression (GWR).
-Designed to plug into your existing pipeline style:
-  data = clean_data_pipeline()
-  data = feature_engineering_pipeline(data)
-  gdf, model = run_gwr_pipeline(data['ken']['features'], ...)
+This file runs the GWR model
 """
 
 from pathlib import Path
@@ -29,23 +23,6 @@ def _msg(s: str):
 # -------------------------
 # Utility / helper methods
 # -------------------------
-def _check_gdf(gdf: gpd.GeoDataFrame, y_var: str, x_vars: List[str]):
-    """Validate inputs exist and are GeoDataFrame."""
-    if not isinstance(gdf, gpd.GeoDataFrame):
-        raise TypeError("gdf must be a GeoDataFrame.")
-    missing = [c for c in [y_var] + x_vars if c not in gdf.columns]
-    if missing:
-        raise ValueError(f"Columns missing from gdf: {missing}")
-
-
-def _warn_if_geographic(gdf: gpd.GeoDataFrame):
-    """Warn if CRS is geographic (degrees)."""
-    if gdf.crs is None:
-        _msg("WARNING: GeoDataFrame has no CRS set.")
-    elif gdf.crs.to_string().startswith("EPSG:4326") or "GEOGCS" in str(gdf.crs).upper():
-        _msg("WARNING: GeoDataFrame is in a geographic CRS (degrees). "
-             "GWR expects a projected CRS in metres. Consider reprojecting.")
-
 
 def _prepare_gwr_data(
     gdf: gpd.GeoDataFrame,
@@ -164,7 +141,7 @@ def run_ols(gdf: gpd.GeoDataFrame, y_var: str, x_vars: List[str]):
     Run a simple OLS for baseline comparison.
     Returns the fitted statsmodels results object.
     """
-    _check_gdf(gdf, y_var, x_vars)
+    # _check_gdf(gdf, y_var, x_vars)
     # Build formula
     formula = y_var + " ~ " + " + ".join(x_vars)
     _msg(f"Running OLS: {formula}")
@@ -172,84 +149,6 @@ def run_ols(gdf: gpd.GeoDataFrame, y_var: str, x_vars: List[str]):
     results = model.fit()
     _msg("OLS complete.")
     return results
-
-
-# def run_gwr_pipeline(
-#     gdf: gpd.GeoDataFrame,
-#     y_var: str = "log_conflict_rate_per_100k",
-#     x_vars: Optional[List[str]] = None,
-#     standardize: bool = True,
-#     kernel: str = "gaussian",
-#     auto_select_bw: bool = True,
-#     bandwidth: Optional[float] = None
-# ):
-#     """
-#     Run a modular GWR pipeline.
-
-#     Parameters
-#     ----------
-#     gdf : GeoDataFrame
-#         GeoDataFrame with geometry and variables already prepared.
-#     y_var : str
-#         Dependent variable column name (use log version).
-#     x_vars : list[str]
-#         List of predictor variable column names.
-#     standardize : bool
-#         Standardize predictors (recommended).
-#     kernel : str
-#         Kernel type for GWR (e.g., 'gaussian').
-#     auto_select_bw : bool
-#         If True, use Sel_BW to choose bandwidth. Otherwise use provided bandwidth.
-#     bandwidth : float or None
-#         If auto_select_bw is False, you must provide a bandwidth.
-
-#     Returns
-#     -------
-#     tuple (gdf_with_results, gwr_results, bw)
-#     - gdf_with_results : GeoDataFrame with local coefficients, local_R2, preds, resids appended
-#     - gwr_results : mgwr results object
-#     - bw : selected bandwidth
-#     """
-#     if x_vars is None:
-#         x_vars = ["police_per_10k"]
-
-#     _check_gdf(gdf, y_var, x_vars)
-#     _warn_if_geographic(gdf)
-
-#     # Prepare OLS baseline
-#     _msg("Running baseline OLS for comparison...")
-#     ols_res = run_ols(gdf, y_var, x_vars)
-#     _msg(f"OLS R-squared: {ols_res.rsquared:.4f}")
-
-#     # Prepare arrays for mgwr
-#     coords, y, X, scaler = _prepare_gwr_data(gdf, y_var, x_vars, standardize=standardize)
-
-#     # Bandwidth selection
-#     if auto_select_bw:
-#         bw = _select_bandwidth(coords, y, X, kernel=kernel)
-#     else:
-#         if bandwidth is None:
-#             raise ValueError("If auto_select_bw is False, you must provide a bandwidth.")
-#         bw = bandwidth
-#         _msg(f"Using provided bandwidth: {bw}")
-
-#     # Fit GWR
-#     gwr_res = _fit_gwr(coords, y, X, bandwidth=bw, kernel=kernel)
-
-#     # Attach results
-#     gdf_out = gdf.copy()
-#     gdf_out = _attach_results_to_gdf(gdf_out, gwr_res, x_vars, y_var, prefix="gwr_")
-
-#     # Print some diagnostics
-#     try:
-#         aicc = getattr(gwr_res, "aicc", None)
-#         if aicc is not None:
-#             _msg(f"GWR AICc: {aicc:.3f}")
-#     except Exception:
-#         pass
-
-#     # Return updated gdf and the results object for further inspection
-#     return gdf_out, gwr_res, bw
 
 def run_gwr_pipeline(
     gdf: gpd.GeoDataFrame,
@@ -259,17 +158,12 @@ def run_gwr_pipeline(
     kernel: str = "gaussian",
     auto_select_bw: bool = True,
     bandwidth: Optional[float] = None,
-    bw_min: Optional[int] = None,   # <-- ADDED
-    bw_max: Optional[int] = None    # <-- ADDED
+    bw_min: Optional[int] = None,  
+    bw_max: Optional[int] = None 
 ):
     """
     Run a modular GWR pipeline.
     """
-    if x_vars is None:
-        x_vars = ["police_per_10k"]
-
-    _check_gdf(gdf, y_var, x_vars)
-    _warn_if_geographic(gdf)
 
     # Prepare OLS baseline
     _msg("Running baseline OLS for comparison...")
@@ -284,8 +178,8 @@ def run_gwr_pipeline(
         bw = _select_bandwidth(
             coords, y, X, 
             kernel=kernel,
-            bw_min=bw_min,     # <-- PASSED THROUGH
-            bw_max=bw_max      # <-- PASSED THROUGH
+            bw_min=bw_min,   
+            bw_max=bw_max  
         )
     else:
         if bandwidth is None:
@@ -300,21 +194,4 @@ def run_gwr_pipeline(
     gdf_out = gdf.copy()
     gdf_out = _attach_results_to_gdf(gdf_out, gwr_res, x_vars, y_var, prefix="gwr_")
 
-    # Print some diagnostics
-    try:
-        aicc = getattr(gwr_res, "aicc", None)
-        if aicc is not None:
-            _msg(f"GWR AICc: {aicc:.3f}")
-    except Exception:
-        pass
-
     return gdf_out, gwr_res, bw
-
-
-# If run as script, provide a tiny smoke test (won't execute on import)
-# if __name__ == "__main__":
-#     _msg("This module is intended to be imported and used in your notebooks.")
-#     _msg("Example usage:")
-#     _msg("from src.modeling import run_gwr_pipeline")
-#     _msg("gdf = data['ken']['features']")
-#     _msg("gdf_out, results, bw = run_gwr_pipeline(gdf, y_var='log_conflict_rate_per_100k', x_vars=['police_per_10k'])")
